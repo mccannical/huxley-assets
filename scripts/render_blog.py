@@ -31,6 +31,9 @@ BASE_TEMPLATE = """<!DOCTYPE html>
     a{{color:var(--accent);text-decoration:none}}
     ul{{padding-left:20px}}
     code{{background:#eee;padding:1px 4px;border-radius:4px}}
+    table{{width:100%;border-collapse:collapse;margin:14px 0;font-size:15px}}
+    th,td{{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left}}
+    thead th{{background:#f7f7f4;font-weight:700}}
   </style>
 </head>
 <body>
@@ -61,42 +64,102 @@ def parse_frontmatter(raw: str):
     return meta, body
 
 
+def render_inline(text: str) -> str:
+    t = html.escape(text)
+    # links: [label](url)
+    t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', t)
+    # inline code
+    t = re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
+    # bold
+    t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
+    # italics
+    t = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", t)
+    return t
+
+
+def _is_table_separator(line: str) -> bool:
+    x = line.strip()
+    if "|" not in x:
+        return False
+    x = x.strip("|")
+    parts = [p.strip() for p in x.split("|")]
+    if not parts:
+        return False
+    for p in parts:
+        if not p:
+            return False
+        if not re.fullmatch(r":?-{3,}:?", p):
+            return False
+    return True
+
+
+def _split_table_row(line: str):
+    x = line.strip().strip("|")
+    return [c.strip() for c in x.split("|")]
+
+
 def md_to_html(md: str) -> str:
-    # very small markdown renderer (safe, dependency-free)
-    lines = md.split("\n")
+    # lightweight markdown renderer (safe, dependency-free)
+    lines = md.replace("\r\n", "\n").split("\n")
     out = []
     in_ul = False
-    for ln in lines:
-        s = ln.strip()
+    i = 0
+
+    def close_ul():
+        nonlocal in_ul
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+
+    while i < len(lines):
+        raw = lines[i]
+        s = raw.strip()
+
         if not s:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
+            close_ul()
+            i += 1
             continue
+
+        # table block: header row + separator + rows
+        if "|" in s and i + 1 < len(lines) and _is_table_separator(lines[i + 1]):
+            close_ul()
+            header = _split_table_row(lines[i])
+            i += 2
+            rows = []
+            while i < len(lines):
+                r = lines[i].strip()
+                if not r or "|" not in r:
+                    break
+                rows.append(_split_table_row(lines[i]))
+                i += 1
+
+            out.append("<table><thead><tr>" + "".join(f"<th>{render_inline(c)}</th>" for c in header) + "</tr></thead><tbody>")
+            for row in rows:
+                out.append("<tr>" + "".join(f"<td>{render_inline(c)}</td>" for c in row) + "</tr>")
+            out.append("</tbody></table>")
+            continue
+
         if s.startswith("### "):
-            if in_ul:
-                out.append("</ul>"); in_ul = False
-            out.append(f"<h3>{html.escape(s[4:])}</h3>")
+            close_ul()
+            out.append(f"<h3>{render_inline(s[4:])}</h3>")
         elif s.startswith("## "):
-            if in_ul:
-                out.append("</ul>"); in_ul = False
-            out.append(f"<h2>{html.escape(s[3:])}</h2>")
+            close_ul()
+            out.append(f"<h2>{render_inline(s[3:])}</h2>")
         elif s.startswith("# "):
-            if in_ul:
-                out.append("</ul>"); in_ul = False
-            out.append(f"<h1>{html.escape(s[2:])}</h1>")
+            close_ul()
+            out.append(f"<h1>{render_inline(s[2:])}</h1>")
         elif s.startswith("- "):
             if not in_ul:
                 out.append("<ul>")
                 in_ul = True
-            out.append(f"<li>{html.escape(s[2:])}</li>")
+            out.append(f"<li>{render_inline(s[2:])}</li>")
         else:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            out.append(f"<p>{html.escape(s)}</p>")
-    if in_ul:
-        out.append("</ul>")
+            close_ul()
+            out.append(f"<p>{render_inline(s)}</p>")
+
+        i += 1
+
+    close_ul()
     return "\n".join(out)
 
 
