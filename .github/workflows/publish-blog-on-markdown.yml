@@ -1,0 +1,40 @@
+name: Publish blog from markdown
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'blog/posts/**/*.md'
+      - 'scripts/render_blog.py'
+      - '.github/workflows/publish-blog-on-markdown.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Render blog HTML
+        run: python scripts/render_blog.py
+
+      - name: Commit generated files
+        run: |
+          if [[ -n "$(git status --porcelain blog/index.html blog/*.html)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add blog/index.html blog/*.html
+            git commit -m "auto: publish blog from markdown"
+            git push
+          else
+            echo "No generated changes"
+          fi
